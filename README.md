@@ -42,7 +42,7 @@ and PMS strategies in India.
 - ⭐ Watchlist — save and track shortlisted stocks
 - 🔔 Alerts system
 - 🔴 Live data pipeline — Kite Connect + Screener.in with daily refresh
-- 🌐 Demo mode for presentation without live API keys
+ 
 
 ---
 
