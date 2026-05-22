@@ -10,7 +10,6 @@ and PMS strategies in India.
 
 ## 📸 Screenshots
 
-## 📸 Screenshots
 
 | Stock Screener |  
 |----------------|
