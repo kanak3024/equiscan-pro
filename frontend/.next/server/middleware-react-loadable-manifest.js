@@ -1,0 +1,1 @@
+self.__REACT_LOADABLE_MANIFEST="{\"app\\\\screener\\\\page.tsx -> ../../lib/api\":{\"id\":\"app\\\\screener\\\\page.tsx -> ../../lib/api\",\"files\":[\"static/chunks/_app-pages-browser_lib_api_ts.js\"]},\"app\\\\screener\\\\page.tsx -> ../../lib/stockData\":{\"id\":\"app\\\\screener\\\\page.tsx -> ../../lib/stockData\",\"files\":[]}}"
