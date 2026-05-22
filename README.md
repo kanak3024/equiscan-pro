@@ -10,9 +10,15 @@ and PMS strategies in India.
 
 ## 📸 Screenshots
 
-| Stock Screener | Filters Panel |
-|----------------|---------------|
-| ![Screener](./screener.png) |
+## 📸 Screenshots
+
+| Stock Screener |  
+|----------------|
+| ![Screener](./screener.png) |  
+
+| Stock Detail — Chart & Metrics | DMA & Relative Strength |
+|-------------------------------|-------------------------|
+| ![Detail](./detail.png) | ![Analysis](./analysis.png) |
 
 ---
 
