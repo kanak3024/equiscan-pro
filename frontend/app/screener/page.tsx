@@ -149,7 +149,7 @@ function ScreenerContent() {
         <div>
           <h1 className="text-2xl font-semibold text-white tracking-tight">Stock Screener</h1>
           <p className="text-white/40 text-sm mt-1 font-mono">
-            NSE · BSE · 18-factor multi-criteria filter engine
+             NSE · BSE · 25-factor multi-criteria filter engine
           </p>
         </div>
         <div className="flex items-center gap-3">
