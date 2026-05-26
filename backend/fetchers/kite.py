@@ -94,6 +94,7 @@ def get_technical_data(kite: KiteConnect, instrument_token: int, symbol: str,
         golden_cross   = calc_golden_cross(closes)
         atr_pct        = calc_atr_pct(df)
         bb_squeeze     = calc_bb_squeeze(closes)
+        st = calc_supertrend(df)
 
         # RS vs Nifty: caller passes nifty_1m_return, we compute stock's
         stock_1m_return = round(float((closes.iloc[-1] / closes.iloc[-21] - 1) * 100), 2)
@@ -120,6 +121,10 @@ def get_technical_data(kite: KiteConnect, instrument_token: int, symbol: str,
             "rs_vs_nifty":      rs_vs_nifty,
             "stock_1m_return":  stock_1m_return,
             "error":            None
+            "supertrend_signal":  st["supertrend_signal"],
+            "supertrend_value":   st["supertrend_value"],
+            "supertrend_buy":     st["supertrend_buy"],
+            "supertrend_days":    st["supertrend_days"],
         }
 
     except Exception as e:
@@ -146,3 +151,71 @@ def get_nifty_1m_return(kite: KiteConnect) -> float:
 def get_all_nse_instruments(kite: KiteConnect) -> list:
     instruments = kite.instruments("NSE")
     return [i for i in instruments if i["segment"] == "NSE"]
+def calc_supertrend(df: pd.DataFrame, period: int = 10, multiplier: float = 3.0) -> dict:
+    """
+    Supertrend indicator.
+    Returns: signal ('BUY' or 'SELL'), current supertrend value, and how many days in current signal.
+    """
+    high  = df["high"]
+    low   = df["low"]
+    close = df["close"]
+
+    # Average True Range
+    tr = pd.concat([
+        high - low,
+        (high - close.shift()).abs(),
+        (low  - close.shift()).abs()
+    ], axis=1).max(axis=1)
+    atr = tr.rolling(period).mean()
+
+    # Basic upper/lower bands
+    hl_avg    = (high + low) / 2
+    upper_band = hl_avg + (multiplier * atr)
+    lower_band = hl_avg - (multiplier * atr)
+
+    # Final bands (dynamic, based on previous close)
+    final_upper = upper_band.copy()
+    final_lower = lower_band.copy()
+
+    for i in range(1, len(df)):
+        final_upper.iloc[i] = (
+            upper_band.iloc[i]
+            if upper_band.iloc[i] < final_upper.iloc[i - 1] or close.iloc[i - 1] > final_upper.iloc[i - 1]
+            else final_upper.iloc[i - 1]
+        )
+        final_lower.iloc[i] = (
+            lower_band.iloc[i]
+            if lower_band.iloc[i] > final_lower.iloc[i - 1] or close.iloc[i - 1] < final_lower.iloc[i - 1]
+            else final_lower.iloc[i - 1]
+        )
+
+    # Supertrend signal
+    supertrend = pd.Series(index=df.index, dtype=float)
+    signal     = pd.Series(index=df.index, dtype=str)
+
+    for i in range(1, len(df)):
+        if close.iloc[i] > final_upper.iloc[i - 1]:
+            supertrend.iloc[i] = final_lower.iloc[i]
+            signal.iloc[i]     = "BUY"
+        elif close.iloc[i] < final_lower.iloc[i - 1]:
+            supertrend.iloc[i] = final_upper.iloc[i]
+            signal.iloc[i]     = "SELL"
+        else:
+            supertrend.iloc[i] = supertrend.iloc[i - 1]
+            signal.iloc[i]     = signal.iloc[i - 1]
+
+    # How many consecutive days in current signal
+    current_signal = signal.iloc[-1]
+    days_in_signal = 0
+    for s in reversed(signal.tolist()):
+        if s == current_signal:
+            days_in_signal += 1
+        else:
+            break
+
+    return {
+        "supertrend_signal":     current_signal,           # "BUY" or "SELL"
+        "supertrend_value":      round(float(supertrend.iloc[-1]), 2),
+        "supertrend_buy":        current_signal == "BUY",  # bool for filter
+        "supertrend_days":       days_in_signal,           # how long in this signal
+    }

@@ -205,6 +205,7 @@ def screen_filter(
     rs_vs_nifty:    bool  = Query(default=False),
     low_atr:        bool  = Query(default=False),
     bb_squeeze:     bool  = Query(default=False),
+    supertrend_buy: bool  = Query(default=False),
 ):
     results = []
     for stock in stock_cache.values():
@@ -225,6 +226,8 @@ def screen_filter(
         if low_atr        and not stock.get("low_atr"):
             continue
         if bb_squeeze     and not stock.get("bb_squeeze"):
+            continue
+        if supertrend_buy and not stock.get("supertrend_buy"):
             continue
         results.append(stock)
 

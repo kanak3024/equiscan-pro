@@ -37,6 +37,10 @@ export type Stock = {
   atrPct?: number        // raw ATR % — useful to display in table
   bbSqueeze?: boolean
   stock1mReturn?: number // raw 1M return % — useful to display in table
+  supertrendBuy?:    boolean
+supertrendSignal?: string
+supertrendValue?:  number
+supertrendDays?:   number
 }
 
 // ── Map raw backend response → Stock type ─────────────────────────────────────
@@ -80,6 +84,10 @@ export function mapApiStock(raw: Record<string, unknown>): Stock {
     atrPct:         (raw.atr_pct as number)          ?? undefined,
     bbSqueeze:      (raw.bb_squeeze as boolean)      ?? false,
     stock1mReturn:  (raw.stock_1m_return as number)  ?? undefined,
+    supertrendBuy:    (raw.supertrend_buy    as boolean) ?? false,
+    supertrendSignal: (raw.supertrend_signal as string)  ?? 'SELL',
+    supertrendValue:  (raw.supertrend_value  as number)  ?? undefined,
+    supertrendDays:   (raw.supertrend_days   as number)  ?? undefined,
   }
 }
 

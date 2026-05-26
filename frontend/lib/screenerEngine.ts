@@ -31,6 +31,7 @@ export type Filters = {
   f_rsVsNifty: boolean
   f_lowAtr: boolean
   f_bbSqueeze: boolean
+  f_supertrendBuy: boolean
 }
 
 export const defaultFilters: Filters = {
@@ -64,6 +65,7 @@ export const defaultFilters: Filters = {
   f_rsVsNifty:           false,
   f_lowAtr:              false,
   f_bbSqueeze:           false,
+  f_supertrendBuy:       false,
 }
 
 export type StockResult = {
@@ -110,6 +112,7 @@ export function runScreener(stocks: Stock[], filters: Filters): StockResult[] {
       f_rsVsNifty:     s.rsVsNifty      ?? false,
       f_lowAtr:        s.lowAtr         ?? false,
       f_bbSqueeze:     s.bbSqueeze      ?? false,
+      f_supertrendBuy: s.supertrendBuy  ?? false,
     }
 
     const score    = Object.values(checks).filter(Boolean).length
@@ -162,4 +165,9 @@ export const TIER2_FILTERS = [
     label:       'Bollinger Band Squeeze',
     description: 'Bands tightening — explosive move likely incoming',
   },
+  {
+  key:         'f_supertrendBuy' as keyof Filters,
+  label:       'Supertrend — Buy Signal',
+  description: 'Price above Supertrend line — clean trend-following buy signal',
+},
 ] as const
