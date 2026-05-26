@@ -32,6 +32,7 @@ export type Filters = {
   f_lowAtr: boolean
   f_bbSqueeze: boolean
   f_supertrendBuy: boolean
+  f_adxBullish: boolean
 }
 
 export const defaultFilters: Filters = {
@@ -66,6 +67,7 @@ export const defaultFilters: Filters = {
   f_lowAtr:              false,
   f_bbSqueeze:           false,
   f_supertrendBuy:       false,
+  f_adxBullish:          false,
 }
 
 export type StockResult = {
@@ -113,6 +115,7 @@ export function runScreener(stocks: Stock[], filters: Filters): StockResult[] {
       f_lowAtr:        s.lowAtr         ?? false,
       f_bbSqueeze:     s.bbSqueeze      ?? false,
       f_supertrendBuy: s.supertrendBuy  ?? false,
+      f_adxBullish:    s.adxBullish     ?? false,
     }
 
     const score    = Object.values(checks).filter(Boolean).length
@@ -166,8 +169,13 @@ export const TIER2_FILTERS = [
     description: 'Bands tightening — explosive move likely incoming',
   },
   {
-  key:         'f_supertrendBuy' as keyof Filters,
-  label:       'Supertrend — Buy Signal',
-  description: 'Price above Supertrend line — clean trend-following buy signal',
-},
+    key:         'f_supertrendBuy' as keyof Filters,
+    label:       'Supertrend — Buy Signal',
+    description: 'Price above Supertrend line — clean trend-following buy signal',
+  },
+  {
+    key:         'f_adxBullish' as keyof Filters,
+    label:       'ADX > 25 — Strong Trend',
+    description: 'Trend is strong enough to trade — filters out choppy sideways stocks',
+  },
 ] as const

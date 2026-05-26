@@ -41,6 +41,12 @@ export type Stock = {
 supertrendSignal?: string
 supertrendValue?:  number
 supertrendDays?:   number
+adxBullish?:    boolean
+adx?:           number
+adxStrong?:     boolean
+adxVeryStrong?: boolean
+plusDi?:        number
+minusDi?:       number
 }
 
 // ── Map raw backend response → Stock type ─────────────────────────────────────
@@ -88,6 +94,12 @@ export function mapApiStock(raw: Record<string, unknown>): Stock {
     supertrendSignal: (raw.supertrend_signal as string)  ?? 'SELL',
     supertrendValue:  (raw.supertrend_value  as number)  ?? undefined,
     supertrendDays:   (raw.supertrend_days   as number)  ?? undefined,
+    adxBullish:    (raw.adx_bullish     as boolean) ?? false,
+adx:           (raw.adx             as number)  ?? undefined,
+adxStrong:     (raw.adx_strong      as boolean) ?? false,
+adxVeryStrong: (raw.adx_very_strong as boolean) ?? false,
+plusDi:        (raw.plus_di         as number)  ?? undefined,
+minusDi:       (raw.minus_di        as number)  ?? undefined,
   }
 }
 
