@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fetchers.screener import get_fundamentals
 from fetchers.trendlyne import get_analyst_data
+from fetchers.kite import get_kite_client, get_technical_data, get_nifty_1m_return, get_all_nse_instruments
 
 load_dotenv()
 
@@ -42,11 +43,20 @@ def load_cache_from_disk():
 # ── Scheduler ─────────────────────────────────────────────────
 scheduler = AsyncIOScheduler(timezone="Asia/Kolkata")
 
-async def fetch_one(symbol: str) -> dict:
+async def fetch_one(symbol: str, kite=None, instrument_map: dict = None, nifty_1m_return: float = None) -> dict:
     meta = SYMBOL_META.get(symbol, {})
     try:
         fund = await get_fundamentals(symbol)
         anal = await get_analyst_data(symbol)
+
+        tech = {}
+        if kite and instrument_map and symbol in instrument_map:
+            token = instrument_map[symbol]
+            tech  = await asyncio.to_thread(
+                get_technical_data, kite, token, symbol, nifty_1m_return
+            )
+            tech.pop("error", None)
+
         return {
             "symbol":       symbol,
             "name":         meta.get("name", symbol),
@@ -54,6 +64,7 @@ async def fetch_one(symbol: str) -> dict:
             "index":        meta.get("index", ""),
             **fund,
             **anal,
+            **tech,
             "last_updated": datetime.now().isoformat(),
         }
     except Exception as e:
@@ -61,12 +72,32 @@ async def fetch_one(symbol: str) -> dict:
 
 async def daily_refresh():
     print(f"\n[{datetime.now()}] Starting daily refresh for {len(SYMBOLS)} stocks...")
-    success = 0
+    success    = 0
     batch_size = 5
 
+    # ── set up Kite once for the whole run ──
+    kite           = None
+    instrument_map = {}
+    nifty_ret      = None
+    try:
+        kite           = get_kite_client()
+        all_inst       = get_all_nse_instruments(kite)
+        instrument_map = {
+            i["tradingsymbol"]: i["instrument_token"]
+            for i in all_inst
+            if i["instrument_type"] == "EQ"
+        }
+        nifty_ret = await asyncio.to_thread(get_nifty_1m_return, kite)
+        print(f"Nifty 1M return: {nifty_ret}%")
+    except Exception as e:
+        print(f"Kite init failed — technical data will be skipped: {e}")
+
     for i in range(0, len(SYMBOLS), batch_size):
-        batch = SYMBOLS[i:i + batch_size]
-        tasks = [fetch_one(sym) for sym in batch]
+        batch   = SYMBOLS[i:i + batch_size]
+        tasks   = [
+            fetch_one(sym, kite=kite, instrument_map=instrument_map, nifty_1m_return=nifty_ret)
+            for sym in batch
+        ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         for sym, result in zip(batch, results):
@@ -78,7 +109,6 @@ async def daily_refresh():
 
         await asyncio.sleep(2)
 
-    # Save to disk
     with open("stock_data.json", "w") as f:
         json.dump(stock_cache, f)
 
@@ -127,7 +157,6 @@ def health():
 
 @app.get("/api/refresh")
 async def manual_refresh():
-    """Trigger a manual refresh"""
     asyncio.create_task(daily_refresh())
     return {"status": "Refresh started in background"}
 
@@ -165,6 +194,42 @@ async def screen(
 
     return {"results": results, "count": len(results)}
 
+# ── Tier 2 Filter Endpoint ────────────────────────────────────
+@app.get("/api/screen/filter")
+def screen_filter(
+    min_roe:        float = Query(default=0),
+    max_pe:         float = Query(default=9999),
+    macd_crossover: bool  = Query(default=False),
+    new_3m_high:    bool  = Query(default=False),
+    golden_cross:   bool  = Query(default=False),
+    rs_vs_nifty:    bool  = Query(default=False),
+    low_atr:        bool  = Query(default=False),
+    bb_squeeze:     bool  = Query(default=False),
+):
+    results = []
+    for stock in stock_cache.values():
+        if stock.get("error"):
+            continue
+        if stock.get("roe", 0) < min_roe:
+            continue
+        if max_pe < 9999 and (stock.get("pe") or 9999) > max_pe:
+            continue
+        if macd_crossover and not stock.get("macd_crossover"):
+            continue
+        if new_3m_high    and not stock.get("new_3m_high"):
+            continue
+        if golden_cross   and not stock.get("golden_cross"):
+            continue
+        if rs_vs_nifty    and not stock.get("rs_vs_nifty"):
+            continue
+        if low_atr        and not stock.get("low_atr"):
+            continue
+        if bb_squeeze     and not stock.get("bb_squeeze"):
+            continue
+        results.append(stock)
+
+    return {"results": results, "count": len(results)}
+
 @app.get("/api/stock/{symbol}/fundamentals")
 async def stock_fundamentals(symbol: str):
     sym = symbol.upper()
@@ -175,8 +240,7 @@ async def stock_fundamentals(symbol: str):
 @app.get("/api/stock/{symbol}/technical")
 def stock_technical(symbol: str):
     try:
-        from fetchers.kite import get_kite_client, get_technical_data
-        kite = get_kite_client()
+        kite        = get_kite_client()
         instruments = kite.instruments("NSE")
         match = next(
             (i for i in instruments
@@ -186,7 +250,8 @@ def stock_technical(symbol: str):
         )
         if not match:
             return {"error": f"{symbol} not found"}
-        return get_technical_data(kite, match["instrument_token"], symbol.upper())
+        nifty_ret = get_nifty_1m_return(kite)
+        return get_technical_data(kite, match["instrument_token"], symbol.upper(), nifty_ret)
     except Exception as e:
         return {"error": str(e)}
 
@@ -201,25 +266,20 @@ def get_symbols():
 @app.get("/api/instruments/search")
 def search_instruments(q: str = Query(default="MANKIND")):
     try:
-        from fetchers.kite import get_kite_client
-        kite = get_kite_client()
+        kite        = get_kite_client()
         instruments = kite.instruments("NSE")
-        results = [
-            i for i in instruments
-            if q.upper() in i["tradingsymbol"]
-        ][:10]
+        results     = [i for i in instruments if q.upper() in i["tradingsymbol"]][:10]
         return {"results": results}
     except Exception as e:
         return {"error": str(e)}
+
 @app.get("/api/stock/{symbol}/fresh")
 async def stock_fresh(symbol: str):
-    """Force fresh fetch bypassing cache"""
     sym = symbol.upper()
-    fund = await get_fundamentals(sym)
-    return fund
+    return await get_fundamentals(sym)
+
 @app.get("/api/stock/{symbol}/debug")
 async def stock_debug(symbol: str):
-    """Debug — show all ratios scraped from Screener.in"""
     import httpx
     from bs4 import BeautifulSoup
     session = os.getenv("SCREENER_SESSION", "")
@@ -232,65 +292,58 @@ async def stock_debug(symbol: str):
             f"https://www.screener.in/company/{symbol.upper()}/consolidated/",
             headers=headers
         )
-        soup = BeautifulSoup(r.text, "html.parser")
+        soup   = BeautifulSoup(r.text, "html.parser")
         ratios = {}
         for li in soup.select("#top-ratios li"):
-            name = li.select_one(".name")
+            name  = li.select_one(".name")
             value = li.select_one(".number")
             if name and value:
                 ratios[name.text.strip()] = value.text.strip()
     return {"ratios": ratios}
+
 @app.get("/api/stock/{symbol}/debug2")
 async def stock_debug2(symbol: str):
     import httpx
     from bs4 import BeautifulSoup
     session = os.getenv("SCREENER_SESSION", "")
-    headers = {
-        "Cookie": f"sessionid={session}",
-        "User-Agent": "Mozilla/5.0"
-    }
+    headers = {"Cookie": f"sessionid={session}", "User-Agent": "Mozilla/5.0"}
     async with httpx.AsyncClient(timeout=20) as client:
-        r = await client.get(
-            f"https://www.screener.in/company/{symbol.upper()}/",
-            headers=headers
-        )
-        soup = BeautifulSoup(r.text, "html.parser")
+        r      = await client.get(f"https://www.screener.in/company/{symbol.upper()}/", headers=headers)
+        soup   = BeautifulSoup(r.text, "html.parser")
         ratios = {}
         for li in soup.select("#top-ratios li"):
-            name = li.select_one(".name")
+            name  = li.select_one(".name")
             value = li.select_one(".number")
             if name and value:
                 ratios[name.text.strip()] = value.text.strip()
     return {"ratios": ratios}
+
 @app.get("/api/stock/{symbol}/debug3")
 async def stock_debug3(symbol: str):
     import httpx
     from bs4 import BeautifulSoup
     session = os.getenv("SCREENER_SESSION", "")
-    headers = {
-        "Cookie": f"sessionid={session}",
-        "User-Agent": "Mozilla/5.0"
-    }
+    headers = {"Cookie": f"sessionid={session}", "User-Agent": "Mozilla/5.0"}
     async with httpx.AsyncClient(timeout=20) as client:
-        r = await client.get(
+        r      = await client.get(
             f"https://www.screener.in/company/{symbol.upper()}/consolidated/",
             headers=headers
         )
-        soup = BeautifulSoup(r.text, "html.parser")
-        bs_section = soup.find("section", {"id": "balance-sheet"})
-        rows = []
-        if bs_section:
-            for row in bs_section.select("tr")[:15]:
+        soup   = BeautifulSoup(r.text, "html.parser")
+        bs_sec = soup.find("section", {"id": "balance-sheet"})
+        rows   = []
+        if bs_sec:
+            for row in bs_sec.select("tr")[:15]:
                 cols = row.select("td")
                 if cols:
                     rows.append([c.text.strip() for c in cols[:3]])
     return {"rows": rows}
+
 @app.get("/api/stock/{symbol}/history")
 def stock_history(symbol: str, days: int = Query(default=365)):
     try:
-        from fetchers.kite import get_kite_client
-        from datetime import datetime, timedelta
-        kite = get_kite_client()
+        from datetime import timedelta
+        kite        = get_kite_client()
         instruments = kite.instruments("NSE")
         match = next(
             (i for i in instruments
@@ -303,8 +356,7 @@ def stock_history(symbol: str, days: int = Query(default=365)):
 
         to_date   = datetime.now()
         from_date = to_date - timedelta(days=days)
-
-        hist = kite.historical_data(
+        hist      = kite.historical_data(
             instrument_token=match["instrument_token"],
             from_date=from_date.strftime("%Y-%m-%d"),
             to_date=to_date.strftime("%Y-%m-%d"),
@@ -326,18 +378,15 @@ def stock_history(symbol: str, days: int = Query(default=365)):
         }
     except Exception as e:
         return {"error": str(e)}
+
 @app.get("/api/nifty/history")
 def nifty_history(days: int = Query(default=365)):
     try:
-        from fetchers.kite import get_kite_client
-        from datetime import datetime, timedelta
-        kite = get_kite_client()
-
-        # Nifty 50 instrument token is 256265
+        from datetime import timedelta
+        kite      = get_kite_client()
         to_date   = datetime.now()
         from_date = to_date - timedelta(days=days)
-
-        hist = kite.historical_data(
+        hist      = kite.historical_data(
             instrument_token=256265,
             from_date=from_date.strftime("%Y-%m-%d"),
             to_date=to_date.strftime("%Y-%m-%d"),
@@ -345,21 +394,18 @@ def nifty_history(days: int = Query(default=365)):
         )
         return {
             "data": [
-                {
-                    "date":  h["date"].strftime("%Y-%m-%d"),
-                    "close": h["close"],
-                }
+                {"date": h["date"].strftime("%Y-%m-%d"), "close": h["close"]}
                 for h in hist
             ]
         }
     except Exception as e:
         return {"error": str(e)}
+
 @app.get("/api/stock/{symbol}/volume")
 def stock_volume(symbol: str):
     try:
-        from fetchers.kite import get_kite_client
-        from datetime import datetime, timedelta
-        kite = get_kite_client()
+        from datetime import timedelta
+        kite        = get_kite_client()
         instruments = kite.instruments("NSE")
         match = next(
             (i for i in instruments
@@ -372,14 +418,12 @@ def stock_volume(symbol: str):
 
         to_date   = datetime.now()
         from_date = to_date - timedelta(days=60)
-
-        hist = kite.historical_data(
+        hist      = kite.historical_data(
             instrument_token=match["instrument_token"],
             from_date=from_date.strftime("%Y-%m-%d"),
             to_date=to_date.strftime("%Y-%m-%d"),
             interval="day"
         )
-
         volumes    = [h["volume"] for h in hist]
         avg_vol_20 = sum(volumes[-20:]) / 20 if len(volumes) >= 20 else 0
         last_vol   = volumes[-1] if volumes else 0
@@ -399,6 +443,7 @@ def stock_volume(symbol: str):
         }
     except Exception as e:
         return {"error": str(e)}
+
 @app.get("/api/market/fii-dii")
 async def fii_dii():
     from fetchers.nse import get_fii_dii_data
@@ -413,10 +458,12 @@ async def bulk_deals():
 async def stock_shareholding(symbol: str):
     from fetchers.nse import get_stock_shareholding
     return await get_stock_shareholding(symbol.upper())
+
 @app.get("/api/stock/{symbol}/analyst-tt")
 async def stock_analyst_tickertape(symbol: str):
     from fetchers.tickertape import get_analyst_rating
     return await get_analyst_rating(symbol.upper())
+
 @app.get("/api/debug/tickertape/{symbol}")
 async def debug_tickertape(symbol: str):
     import httpx
@@ -425,10 +472,9 @@ async def debug_tickertape(symbol: str):
         "Referer": "https://www.tickertape.in/",
     }
     async with httpx.AsyncClient(timeout=15, headers=headers) as client:
-        r = await client.get(
-            f"https://api.tickertape.in/stocks/search?text={symbol}&count=3"
-        )
+        r = await client.get(f"https://api.tickertape.in/stocks/search?text={symbol}&count=3")
         return {"status": r.status_code, "data": r.text[:500]}
+
 @app.get("/api/debug/tickertape2/{sid}")
 async def debug_tickertape2(sid: str):
     import httpx
@@ -439,6 +485,7 @@ async def debug_tickertape2(sid: str):
     async with httpx.AsyncClient(timeout=15, headers=headers) as client:
         r = await client.get(f"https://api.tickertape.in/stocks/forecast/{sid}")
         return {"status": r.status_code, "data": r.text[:500]}
+
 @app.get("/api/debug/tickertape3/{sid}")
 async def debug_tickertape3(sid: str):
     import httpx
@@ -458,52 +505,38 @@ async def debug_tickertape3(sid: str):
             r = await client.get(url)
             results[url] = {"status": r.status_code, "data": r.text[:200]}
         return results
+
 @app.get("/api/debug/screener-analyst/{symbol}")
 async def debug_screener_analyst(symbol: str):
     import httpx
     from bs4 import BeautifulSoup
     session = os.getenv("SCREENER_SESSION", "")
-    headers = {
-        "Cookie": f"sessionid={session}",
-        "User-Agent": "Mozilla/5.0"
-    }
+    headers = {"Cookie": f"sessionid={session}", "User-Agent": "Mozilla/5.0"}
     async with httpx.AsyncClient(timeout=20) as client:
-        r = await client.get(
-            f"https://www.screener.in/company/{symbol}/",
-            headers=headers
-        )
+        r    = await client.get(f"https://www.screener.in/company/{symbol}/", headers=headers)
         soup = BeautifulSoup(r.text, "html.parser")
-        
-        # Look for analyst sections
         results = {}
-        
-        # Check for forecast/analyst section
         for section in soup.find_all("section"):
             sid = section.get("id", "")
-            h2 = section.find("h2")
+            h2  = section.find("h2")
             if h2:
                 results[sid or h2.text.strip()] = h2.text.strip()
-        
         return {"sections": results}
+
 @app.get("/api/debug/screener-insights/{symbol}")
 async def debug_screener_insights(symbol: str):
     import httpx
     from bs4 import BeautifulSoup
     session = os.getenv("SCREENER_SESSION", "")
-    headers = {
-        "Cookie": f"sessionid={session}",
-        "User-Agent": "Mozilla/5.0"
-    }
+    headers = {"Cookie": f"sessionid={session}", "User-Agent": "Mozilla/5.0"}
     async with httpx.AsyncClient(timeout=20) as client:
-        r = await client.get(
-            f"https://www.screener.in/company/{symbol}/",
-            headers=headers
-        )
-        soup = BeautifulSoup(r.text, "html.parser")
+        r        = await client.get(f"https://www.screener.in/company/{symbol}/", headers=headers)
+        soup     = BeautifulSoup(r.text, "html.parser")
         insights = soup.find("section", {"id": "insights"})
         if insights:
             return {"text": insights.get_text(separator="\n", strip=True)[:1000]}
-        return {"error": "No insights section found"} 
+        return {"error": "No insights section found"}
+
 @app.get("/api/debug/groww/{symbol}")
 async def debug_groww(symbol: str):
     import httpx
@@ -516,6 +549,7 @@ async def debug_groww(symbol: str):
             f"https://groww.in/v1/api/stocks_data/v1/accord_fintech/company/search/nse/{symbol}"
         )
         return {"status": r.status_code, "data": r.text[:500]}
+
 @app.get("/api/debug/groww2/{symbol}")
 async def debug_groww2(symbol: str):
     import httpx
@@ -535,22 +569,19 @@ async def debug_groww2(symbol: str):
         for url in urls:
             try:
                 r = await client.get(url)
-                results[url.split("/")[-1]] = {
-                    "status": r.status_code,
-                    "data": r.text[:300]
-                }
+                results[url.split("/")[-1]] = {"status": r.status_code, "data": r.text[:300]}
             except Exception as e:
                 results[url.split("/")[-1]] = {"error": str(e)}
         return results
+
 @app.get("/api/stock/{symbol}/quant")
 def stock_quant(symbol: str):
     try:
-        from fetchers.kite import get_kite_client
         from fetchers.quant import generate_quant_signal
-        from datetime import datetime, timedelta
+        from datetime import timedelta
         import pandas as pd
 
-        kite = get_kite_client()
+        kite        = get_kite_client()
         instruments = kite.instruments("NSE")
         match = next(
             (i for i in instruments
@@ -563,19 +594,14 @@ def stock_quant(symbol: str):
 
         to_date   = datetime.now()
         from_date = to_date - timedelta(days=400)
-
-        hist = kite.historical_data(
+        hist      = kite.historical_data(
             instrument_token=match["instrument_token"],
             from_date=from_date.strftime("%Y-%m-%d"),
             to_date=to_date.strftime("%Y-%m-%d"),
             interval="day"
         )
-
         df      = pd.DataFrame(hist)
-        prices  = df["close"]
-        volumes = df["volume"]
-
-        result = generate_quant_signal(prices, volumes, df)
+        result  = generate_quant_signal(df["close"], df["volume"], df)
         return {"symbol": symbol.upper(), **result}
 
     except Exception as e:

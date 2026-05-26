@@ -1,6 +1,7 @@
 import { Stock } from './stockData'
 
 export type Filters = {
+  // ── Existing filters ───────────────────────────────────────
   f_listed8y: boolean
   f_mcap1000: boolean
   f_promoter75: boolean
@@ -20,34 +21,49 @@ export type Filters = {
   f_priceTargetUpside20: boolean
   f_instBuying: boolean
   f_epsIncreasing: boolean
+  f_near52wHigh: boolean
   minMcap: number
   minPromoter: number
-  f_near52wHigh: boolean
+  // ── Tier 2 filters ─────────────────────────────────────────
+  f_macdCrossover: boolean
+  f_new3mHigh: boolean
+  f_goldenCross: boolean
+  f_rsVsNifty: boolean
+  f_lowAtr: boolean
+  f_bbSqueeze: boolean
 }
 
 export const defaultFilters: Filters = {
-  f_listed8y: true,
-  f_mcap1000: true,
-  f_promoter75: true,
-  f_noDilution: true,
-  f_dmaAligned: true,
-  f_dma50_200: true,
-  f_profit3Q: true,
-  f_cashflow5Q: true,
-  f_epsIncreasing: false,
-   f_analystPositive: true,
-  f_pledge5: false,
-  f_rsiHealthy: false,
-  f_peUnder60: false,
-  f_revenueGrowth15: false,
-  f_debtLow: false,
-  f_roe15: false,
-  f_recentUpgrade: false,
+  // ── Existing defaults ──────────────────────────────────────
+  f_listed8y:            true,
+  f_mcap1000:            true,
+  f_promoter75:          true,
+  f_noDilution:          true,
+  f_dmaAligned:          true,
+  f_dma50_200:           true,
+  f_profit3Q:            true,
+  f_cashflow5Q:          true,
+  f_analystPositive:     true,
+  f_pledge5:             false,
+  f_rsiHealthy:          false,
+  f_peUnder60:           false,
+  f_revenueGrowth15:     false,
+  f_debtLow:             false,
+  f_roe15:               false,
+  f_recentUpgrade:       false,
   f_priceTargetUpside20: false,
-  f_instBuying: false,
-  minMcap: 1000,
-  minPromoter: 75,
-  f_near52wHigh: false,
+  f_instBuying:          false,
+  f_epsIncreasing:       false,
+  f_near52wHigh:         false,
+  minMcap:               1000,
+  minPromoter:           75,
+  // ── Tier 2 defaults (all off — opt-in) ────────────────────
+  f_macdCrossover:       false,
+  f_new3mHigh:           false,
+  f_goldenCross:         false,
+  f_rsVsNifty:           false,
+  f_lowAtr:              false,
+  f_bbSqueeze:           false,
 }
 
 export type StockResult = {
@@ -63,11 +79,12 @@ export function runScreener(stocks: Stock[], filters: Filters): StockResult[] {
     const upside = ((s.priceTarget - s.cmp) / s.cmp) * 100
 
     const checks: Record<string, boolean> = {
+      // ── Existing checks ──────────────────────────────────────
       f_listed8y:            s.ipoYear >= 2017,
       f_mcap1000:            s.mcap >= filters.minMcap,
       f_promoter75:          s.promoter >= filters.minPromoter,
       f_noDilution:          s.promoterStable,
-      f_dmaAligned: s.dma20 > s.dma50 && s.dma50 > s.dma200,
+      f_dmaAligned:          s.dma20 > s.dma50 && s.dma50 > s.dma200,
       f_dma50_200:           s.dma50 > s.dma200,
       f_profit3Q:            s.profit3Q,
       f_cashflow5Q:          s.cashflow5Q,
@@ -81,19 +98,23 @@ export function runScreener(stocks: Stock[], filters: Filters): StockResult[] {
       f_recentUpgrade:       s.recentUpgrade,
       f_priceTargetUpside20: upside > 20,
       f_instBuying:          s.instBuying,
-      f_epsIncreasing: s.epsIncreasing ?? false,
+      f_epsIncreasing:       s.epsIncreasing ?? false,
       f_near52wHigh: (() => {
-  if (!s.high52w || !s.cmp) return false
-  const pctFromHigh = ((s.cmp - s.high52w) / s.high52w) * 100
-  return pctFromHigh >= -10
-})(),
+        if (!s.high52w || !s.cmp) return false
+        return ((s.cmp - s.high52w) / s.high52w) * 100 >= -10
+      })(),
+      // ── Tier 2 checks ────────────────────────────────────────
+      f_macdCrossover: s.macdCrossover  ?? false,
+      f_new3mHigh:     s.new3mHigh      ?? false,
+      f_goldenCross:   s.goldenCross    ?? false,
+      f_rsVsNifty:     s.rsVsNifty      ?? false,
+      f_lowAtr:        s.lowAtr         ?? false,
+      f_bbSqueeze:     s.bbSqueeze      ?? false,
     }
 
-    // Score = all checks regardless of filter toggle
-    const score = Object.values(checks).filter(Boolean).length
+    const score    = Object.values(checks).filter(Boolean).length
     const maxScore = Object.keys(checks).length
 
-    // Passed = only active filters must be true
     const activeFilterKeys = Object.keys(filters).filter(
       (k) => k.startsWith('f_') && filters[k as keyof Filters] === true
     )
@@ -102,10 +123,43 @@ export function runScreener(stocks: Stock[], filters: Filters): StockResult[] {
     return { stock: s, checks, score, maxScore, passed }
   })
 
-  // Sort: passed first, then by score descending
   return results.sort((a, b) => {
     if (a.passed && !b.passed) return -1
     if (!a.passed && b.passed) return 1
     return b.score - a.score
   })
 }
+
+// ── Tier 2 filter metadata (used by FilterPanel to render the section) ────────
+export const TIER2_FILTERS = [
+  {
+    key:         'f_macdCrossover' as keyof Filters,
+    label:       'MACD Bullish Crossover',
+    description: 'MACD line just crossed above signal line — momentum turning positive',
+  },
+  {
+    key:         'f_new3mHigh' as keyof Filters,
+    label:       'Price Making New Highs',
+    description: 'CMP is at or above the 3-month high — breakout signal',
+  },
+  {
+    key:         'f_goldenCross' as keyof Filters,
+    label:       'Golden Cross',
+    description: '50 DMA crossed above 200 DMA recently — major bullish event',
+  },
+  {
+    key:         'f_rsVsNifty' as keyof Filters,
+    label:       'Relative Strength > Nifty',
+    description: 'Stock 1M return beating Nifty 50 — outperformance signal',
+  },
+  {
+    key:         'f_lowAtr' as keyof Filters,
+    label:       'ATR < 3%',
+    description: 'Daily volatility is low and controlled — stable price action',
+  },
+  {
+    key:         'f_bbSqueeze' as keyof Filters,
+    label:       'Bollinger Band Squeeze',
+    description: 'Bands tightening — explosive move likely incoming',
+  },
+] as const
