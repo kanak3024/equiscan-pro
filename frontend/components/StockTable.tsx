@@ -6,12 +6,17 @@ type Props = {
   results: StockResult[]
 }
 
+// FIX: added 'Strong Buy' and 'Underperform' — both are valid consensus values
+// from trendlyne.py and quant.py respectively. Previously fell back to Neutral
+// styling which misrepresented the signal strength.
 const analystColor: Record<string, string> = {
-  Buy:        'bg-green-500/10 text-green-400 border-green-500/20',
-  Outperform: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-  Hold:       'bg-amber-500/10 text-amber-400 border-amber-500/20',
-  Neutral:    'bg-white/5 text-white/30 border-white/10',
-  Sell:       'bg-red-500/10 text-red-400 border-red-500/20',
+  'Strong Buy':  'bg-green-500/20 text-green-300 border-green-500/30',
+  'Buy':         'bg-green-500/10 text-green-400 border-green-500/20',
+  'Outperform':  'bg-blue-500/10 text-blue-400 border-blue-500/20',
+  'Hold':        'bg-amber-500/10 text-amber-400 border-amber-500/20',
+  'Neutral':     'bg-white/5 text-white/30 border-white/10',
+  'Underperform':'bg-orange-500/10 text-orange-400 border-orange-500/20',
+  'Sell':        'bg-red-500/10 text-red-400 border-red-500/20',
 }
 
 const sectorColors = [
@@ -26,7 +31,7 @@ const sectorColors = [
 export default function StockTable({ results }: Props) {
   const router = useRouter()
 
-  const passed = results.filter(r => r.passed)
+  const passed       = results.filter(r => r.passed)
   const activeFilters = results.length > 0 && results.some(r => !r.passed)
 
   if (passed.length === 0) {
@@ -56,14 +61,34 @@ export default function StockTable({ results }: Props) {
       {/* Rows — only passed stocks */}
       {passed.map((r, i) => {
         const s = r.stock
+
         const mcapStr = s.mcap >= 100000
-  ? `₹${(s.mcap / 100000).toFixed(1)}L Cr`
-  : s.mcap >= 1000
-  ? `₹${s.mcap.toLocaleString('en-IN')} Cr`
-  : `₹${s.mcap} Cr`
-        const scorePct  = Math.round((r.score / r.maxScore) * 100)
-        const scoreColor = r.score >= 15 ? 'text-green-400' : r.score >= 10 ? 'text-blue-400' : r.score >= 7 ? 'text-amber-400' : 'text-red-400'
-        const barColor   = r.score >= 15 ? 'bg-green-400' : r.score >= 10 ? 'bg-blue-400' : r.score >= 7 ? 'bg-amber-400' : 'bg-red-400'
+          ? `₹${(s.mcap / 100000).toFixed(1)}L Cr`
+          : s.mcap >= 1000
+          ? `₹${s.mcap.toLocaleString('en-IN')} Cr`
+          : `₹${s.mcap} Cr`
+
+        // FIX: guard maxScore = 0 to avoid NaN% when no filters are active
+        const scorePct = r.maxScore > 0
+          ? Math.round((r.score / r.maxScore) * 100)
+          : 0
+
+        // FIX: use scorePct (percentage) instead of raw score counts.
+        // Before our screenerEngine fix, score was out of ~26 total checks so
+        // thresholds like >= 15 made sense. Now score is out of however many
+        // filters the user has enabled (could be 3–4), making absolute
+        // thresholds meaningless — e.g. score of 7 is now unreachable with
+        // only 5 active filters.
+        const scoreColor = scorePct >= 80 ? 'text-green-400'
+                         : scorePct >= 60 ? 'text-blue-400'
+                         : scorePct >= 40 ? 'text-amber-400'
+                         : 'text-red-400'
+
+        const barColor   = scorePct >= 80 ? 'bg-green-400'
+                         : scorePct >= 60 ? 'bg-blue-400'
+                         : scorePct >= 40 ? 'bg-amber-400'
+                         : 'bg-red-400'
+
         const sectorColor = sectorColors[i % sectorColors.length]
 
         return (
@@ -95,10 +120,13 @@ export default function StockTable({ results }: Props) {
               </span>
             </div>
 
-            {/* P/E */}
+            {/* P/E — null safe */}
             <div className="flex items-center">
               <span className="text-sm font-mono text-white/70">
-                {s.pe !== null ? `${s.pe}x` : <span className="text-white/20">N/A</span>}
+                {s.pe !== null
+                  ? `${s.pe}x`
+                  : <span className="text-white/20">N/A</span>
+                }
               </span>
             </div>
 
@@ -109,18 +137,23 @@ export default function StockTable({ results }: Props) {
               </span>
             </div>
 
-            {/* Analyst */}
+            {/* Analyst — fallback to Neutral style for any unmapped value */}
             <div className="flex items-center">
-              <span className={`text-xs font-mono px-2 py-0.5 rounded-full border ${analystColor[s.analyst] || analystColor.Neutral}`}>
+              <span className={`text-xs font-mono px-2 py-0.5 rounded-full border ${analystColor[s.analyst] ?? analystColor['Neutral']}`}>
                 {s.analyst}
               </span>
             </div>
 
-            {/* Score */}
+            {/* Score — percentage-based color, division-by-zero safe */}
             <div className="flex items-center gap-2">
-              <span className={`text-sm font-mono font-semibold ${scoreColor}`}>{r.score}</span>
+              <span className={`text-sm font-mono font-semibold ${scoreColor}`}>
+                {r.score}
+              </span>
               <div className="w-12 h-1.5 bg-white/5 rounded-full overflow-hidden">
-                <div className={`h-full rounded-full ${barColor}`} style={{ width: `${scorePct}%` }} />
+                <div
+                  className={`h-full rounded-full ${barColor}`}
+                  style={{ width: `${scorePct}%` }}
+                />
               </div>
             </div>
           </div>
