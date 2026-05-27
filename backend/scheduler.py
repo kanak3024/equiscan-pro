@@ -29,7 +29,8 @@ def get_ipo_year(symbol: str) -> int:
 
 def get_quant_signal_sync(symbol: str, instruments: list) -> dict:
     from fetchers.kite import get_kite_client
-    from fetchers.quant import generate_quant_signal
+    from fetchers.quant import generate_quant_signal, calc_tier2_signals
+    from datetime import datetime, timedelta
     import pandas as pd
 
     try:
@@ -55,7 +56,12 @@ def get_quant_signal_sync(symbol: str, instruments: list) -> dict:
         df      = pd.DataFrame(hist)
         prices  = df["close"]
         volumes = df["volume"]
-        return generate_quant_signal(prices, volumes, df)
+
+        result  = generate_quant_signal(prices, volumes, df)
+        atr     = result.get("atr", float(prices.iloc[-1]) * 0.02)
+        tier2   = calc_tier2_signals(prices, volumes, df, atr)
+        result.update(tier2)
+        return result
     except Exception as e:
         return {"error": str(e)}
 
